@@ -15,7 +15,7 @@ app.get('/health', (req, res) => {
 });
 
 // For any other request, serve the index.html from the dist folder
-app.get('*', (req, res) => {
+app.get(/.*/, (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
 });
 
