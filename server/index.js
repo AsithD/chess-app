@@ -43,7 +43,8 @@ io.on('connection', (socket) => {
 
         rooms.set(room, {
             players: [socket.id],
-            colors: { [socket.id]: assignedColor }
+            colors: { [socket.id]: assignedColor },
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" // Initial FEN
         });
 
         socket.join(room);
@@ -74,22 +75,42 @@ io.on('connection', (socket) => {
 
         socket.join(room);
 
-        // Notify joiner
-        socket.emit("room_joined", { room, color: joinerColor });
+        // Notify joiner with current game state
+        socket.emit("room_joined", {
+            room,
+            color: joinerColor,
+            fen: roomData.fen
+        });
 
         // Notify creator (and joiner) that game serves can start/sync
-        socket.to(room).emit("user_joined", socket.id); // For existing Game sync logic
+        socket.to(room).emit("user_joined", socket.id);
         io.in(room).emit("game_start", {
             players: roomData.players,
-            colors: roomData.colors
+            colors: roomData.colors,
+            fen: roomData.fen
         });
 
         console.log(`User ${socket.id} joined ${room} as ${joinerColor}`);
     });
 
     socket.on("send_move", (data) => {
-        // Broadcast the move to others in the room
-        socket.to(data.room).emit("receive_move", data.move);
+        const roomData = rooms.get(data.room);
+        if (roomData) {
+            // Update FEN on server (Frontend sends the move, not FEN, so we might want to store FEN too)
+            // For now, let's assume the frontend will send the *new* FEN as well or we compute it.
+            // Actually, frontend current code sends { move, room }.
+            // Let's add 'fen' to the send_move payload in Game.jsx later.
+            if (data.newFen) roomData.fen = data.newFen;
+            socket.to(data.room).emit("receive_move", data.move);
+        }
+    });
+
+    socket.on("sync_board", ({ room, fen }) => {
+        const roomData = rooms.get(room);
+        if (roomData) {
+            roomData.fen = fen;
+            socket.to(room).emit("set_board", fen);
+        }
     });
 
     // Chat Events
@@ -121,6 +142,9 @@ io.on('connection', (socket) => {
     socket.on("rematch_accept", ({ room }) => {
         const roomData = rooms.get(room);
         if (roomData) {
+            // Reset FEN
+            roomData.fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
             // Swap colors
             const p1 = roomData.players[0];
             const p2 = roomData.players[1];
@@ -134,7 +158,8 @@ io.on('connection', (socket) => {
             }
 
             io.in(room).emit("game_reset", {
-                colors: roomData.colors
+                colors: roomData.colors,
+                fen: roomData.fen
             });
         }
     });

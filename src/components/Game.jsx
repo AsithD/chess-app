@@ -4,8 +4,9 @@ import { Chessboard } from "react-chessboard";
 import Chat from "./Chat";
 import { aiMove } from "js-chess-engine";
 
-function Game({ room, socket, orientation }) {
-    const [fen, setFen] = useState(() => new Chess().fen());
+function Game({ room, socket, orientation, initialData }) {
+    const [fen, setFen] = useState(() => initialData?.fen || new Chess().fen());
+    const [waiting, setWaiting] = useState(() => initialData?.waiting ?? true);
     // Use a ref to keep track of fen without triggering re-renders in effects that only need *current* value
     const fenRef = useRef(fen);
 
@@ -32,29 +33,37 @@ function Game({ room, socket, orientation }) {
 
         const onUserJoined = (id) => {
             console.log("User joined:", id);
-            // Send the current FEN from the ref (most up to date)
+            setWaiting(false);
+            // Send the current FEN from the ref (most up to date) to ensure sync
             socket.emit("sync_board", { room, fen: fenRef.current });
         };
 
         const onSetBoard = (newFen) => {
             console.log("Syncing board to:", newFen);
             setFen(newFen);
+            setWaiting(false);
+        };
+
+        const onGameStart = ({ fen: startFen, players }) => {
+            if (startFen) setFen(startFen);
+            if (players && players.length >= 2) setWaiting(false);
         };
 
         socket.on("receive_move", onReceiveMove);
         socket.on("user_joined", onUserJoined);
         socket.on("set_board", onSetBoard);
+        socket.on("game_start", onGameStart);
 
         return () => {
             socket.off("receive_move", onReceiveMove);
             socket.off("user_joined", onUserJoined);
             socket.off("set_board", onSetBoard);
+            socket.off("game_start", onGameStart);
         };
     }, [socket, room]);
 
     function onDrop(sourceSquare, targetSquare, piece) {
-        console.log(`DROPPED: ${piece} from ${sourceSquare} to ${targetSquare}`);
-        console.log("Current FEN:", fen);
+        if (waiting) return false; // Don't allow moves if waiting for opponent
 
         try {
             const game = new Chess(fen);
@@ -67,26 +76,19 @@ function Game({ room, socket, orientation }) {
 
                 // Try simple move
                 const moveConfig = { from: sourceSquare, to: targetSquare };
-                console.log("Trying move config:", moveConfig);
                 result = game.move(moveConfig);
             } catch (e) {
-                console.log("Simple move failed (might need promotion info), error:", e.message);
                 // If failed, try with promotion
                 try {
                     const promotionConfig = { from: sourceSquare, to: targetSquare, promotion: 'q' };
-                    console.log("Trying promotion config:", promotionConfig);
                     result = game.move(promotionConfig);
                 } catch (e2) {
-                    console.error("Promotion move also failed:", e2);
                     return false;
                 }
             }
 
-            console.log("Move Result:", result);
-
             if (result) {
                 const newFen = game.fen();
-                console.log("Move Valid! New FEN:", newFen);
                 setFen(newFen);
                 socket.emit("send_move", {
                     move: {
@@ -94,11 +96,10 @@ function Game({ room, socket, orientation }) {
                         to: result.to,
                         promotion: result.promotion
                     },
+                    newFen, // Sync FEN with server
                     room
                 });
                 return true;
-            } else {
-                console.warn("Move returned null result (illegal move?)");
             }
         } catch (error) {
             console.error("Critical onDrop error:", error);
@@ -248,6 +249,21 @@ function Game({ room, socket, orientation }) {
                         customLightSquareStyle={{ backgroundColor: "#ebecd0" }}
                         animationDuration={200}
                     />
+
+                    {/* Waiting Overlay */}
+                    {waiting && (
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-40 rounded-lg animate-in fade-in duration-500">
+                            <div className="bg-gray-800 p-6 rounded-2xl border border-gray-700 shadow-2xl flex flex-col items-center gap-4">
+                                <div className="flex gap-2">
+                                    <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                                    <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                                    <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce"></div>
+                                </div>
+                                <h3 className="text-xl font-bold text-white uppercase tracking-wider">Waiting for Opponent</h3>
+                                <p className="text-gray-400 text-sm">Share room name: <span className="text-blue-400 font-mono font-bold">{room}</span></p>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Game Over Overlay */}
                     {gameResult && (

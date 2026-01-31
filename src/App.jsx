@@ -21,16 +21,20 @@ function App() {
     socket.emit("join_room", { room });
   };
 
+  const [initialData, setInitialData] = useState({});
+
   useEffect(() => {
     socket.on("room_created", ({ room, color }) => {
       setIsInGame(true);
       setPlayerColor(color);
+      setInitialData({ waiting: true });
       setError("");
     });
 
-    socket.on("room_joined", ({ room, color }) => {
+    socket.on("room_joined", ({ room, color, fen }) => {
       setIsInGame(true);
       setPlayerColor(color);
+      setInitialData({ waiting: false, fen });
       setError("");
     });
 
@@ -39,8 +43,9 @@ function App() {
       setTimeout(() => setError(""), 3000);
     });
 
-    socket.on("game_reset", ({ colors }) => {
+    socket.on("game_reset", ({ colors, fen }) => {
       setPlayerColor(colors[socket.id]);
+      setInitialData({ waiting: false, fen });
       setGameKey(prev => prev + 1); // Force re-render of Game component
     });
 
@@ -131,7 +136,7 @@ function App() {
           </div>
         </div>
       ) : (
-        <Game key={gameKey} room={room} socket={socket} orientation={playerColor} />
+        <Game key={gameKey} room={room} socket={socket} orientation={playerColor} initialData={initialData} />
       )}
     </div>
   );
