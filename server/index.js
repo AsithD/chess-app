@@ -6,6 +6,10 @@ const cors = require('cors');
 
 app.use(cors());
 
+app.get('/', (req, res) => {
+    res.send("Chess Server is running!");
+});
+
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -132,6 +136,9 @@ io.on('connection', (socket) => {
     });
 });
 
-server.listen(3001, () => {
-    console.log("SERVER RUNNING ON PORT 3001");
+const PORT = process.env.PORT || 3001;
+
+server.listen(PORT, () => {
+    console.log("SERVER RUNNING ON PORT", PORT);
 });
+
