@@ -3,11 +3,20 @@ const app = express();
 const http = require('http');
 const { Server } = require("socket.io");
 const cors = require('cors');
+const path = require('path');
 
 app.use(cors());
 
-app.get('/', (req, res) => {
+// Serve static files from the Vite build directory
+app.use(express.static(path.join(__dirname, '..', 'dist')));
+
+app.get('/health', (req, res) => {
     res.send("Chess Server is running!");
+});
+
+// For any other request, serve the index.html from the dist folder
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
 });
 
 const server = http.createServer(app);
