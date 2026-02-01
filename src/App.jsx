@@ -261,21 +261,43 @@ function App() {
                 <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Intel & Assets</h5>
 
                 {!user.isGuest ? (
-                  <div className="space-y-3">
-                    <div className="p-4 rounded-xl bg-gray-900/30 border border-gray-800 flex justify-between items-center">
-                      <span className="text-sm font-bold text-gray-400">Match History</span>
-                      <span className="px-2 py-1 rounded bg-blue-900/40 text-blue-400 text-[10px] font-black">ACTIVE</span>
+                  <div className="space-y-6">
+                    <div className="flex flex-col gap-3">
+                      <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Match History (Last 10)</h5>
+                      {history.length > 0 ? (
+                        <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                          {history.map((match) => (
+                            <div key={match.id} className="p-3 rounded-xl bg-gray-900/40 border border-gray-700 flex justify-between items-center group hover:border-blue-500 transition-colors">
+                              <div className="flex flex-col">
+                                <span className={`text-xs font-black uppercase tracking-tight ${match.result.includes("Won") ? "text-green-400" : match.result.includes("Lost") ? "text-red-400" : "text-gray-400"}`}>
+                                  {match.result}
+                                </span>
+                                <span className="text-[10px] text-gray-500 font-mono">Room: {match.room}</span>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-[10px] text-gray-500">{match.timestamp?.toDate().toLocaleDateString()}</div>
+                                <div className="text-[9px] text-gray-600 uppercase font-black">{match.color}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-4 bg-gray-900/20 rounded-xl text-center text-xs text-gray-600 italic border border-gray-800/50">
+                          No match history found.
+                        </div>
+                      )}
                     </div>
+
                     <div className="p-4 rounded-xl bg-gray-900/30 border border-gray-800 flex justify-between items-center opacity-50">
-                      <span className="text-sm font-bold text-gray-400">Alliance (Friends)</span>
+                      <span className="text-sm font-bold text-gray-400 tracking-tight">Alliance (Friends)</span>
                       <span className="px-2 py-1 rounded bg-gray-800 text-gray-500 text-[10px] font-black italic">COMING SOON</span>
                     </div>
                   </div>
                 ) : (
-                  <div className="p-6 rounded-2xl bg-blue-900/20 border border-blue-500/30 text-center space-y-4">
-                    <p className="text-sm text-blue-200">History and Social Features are reserved for **Registered Agents**.</p>
+                  <div className="p-6 rounded-2xl bg-blue-900/20 border border-blue-500/30 text-center space-y-4 shadow-xl shadow-blue-900/10">
+                    <p className="text-sm text-blue-200 leading-relaxed font-medium">History and Social features are reserved for **Registered Agents**.</p>
                     <button
-                      onClick={() => { setUser(null); setShowProfile(false); }}
+                      onClick={handleLogout}
                       className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg shadow-blue-900/30 transition-all active:scale-95"
                     >
                       Sign Up Now
