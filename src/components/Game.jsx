@@ -190,12 +190,14 @@ function Game({ room, socket, orientation, initialData, user }) {
                     moveConfig = { from: sourceSquare, to: targetSquare, promotion: 'q' };
                     result = game.move(moveConfig);
                 } catch (e2) {
+                    console.log("Move rejected - invalid chess move");
                     return false;
                 }
             }
 
             if (result) {
                 const newFen = game.fen();
+                console.log("Move SUCCESS:", result.san, "New Turn:", game.turn());
                 const label = analyzeMove(fen, newFen, moveConfig);
                 setEvaluations(prev => [...prev, label]);
                 setFen(newFen);
@@ -211,6 +213,8 @@ function Game({ room, socket, orientation, initialData, user }) {
                     label
                 });
                 return true;
+            } else {
+                console.log("Move returned null - likely invalid");
             }
         } catch (error) {
             console.error("Critical onDrop error:", error);
