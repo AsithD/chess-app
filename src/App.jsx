@@ -3,7 +3,7 @@ import Game from './components/Game';
 import Auth from './components/Auth';
 import socket from './utils/socket';
 import { auth, db, logout as firebaseLogout } from './utils/firebase';
-import { collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
+import { collection, query, where, orderBy, limit, onSnapshot, doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import './index.css';
 
 function App() {
@@ -22,13 +22,31 @@ function App() {
 
   useEffect(() => {
     let unsubscribeHistory;
-    const unsubscribeAuth = auth.onAuthStateChanged((firebaseUser) => {
+    const unsubscribeAuth = auth.onAuthStateChanged(async (firebaseUser) => {
       if (firebaseUser) {
+        // Fetch Elo Profile
+        const userRef = doc(db, "users", firebaseUser.uid);
+        const userSnap = await getDoc(userRef);
+        let currentRating = 400;
+
+        if (userSnap.exists()) {
+          currentRating = userSnap.data().rating || 400;
+        } else {
+          await setDoc(userRef, {
+            name: firebaseUser.displayName,
+            uid: firebaseUser.uid,
+            rating: 400,
+            gamesPlayed: 0,
+            joinedAt: serverTimestamp()
+          });
+        }
+
         const userData = {
           name: firebaseUser.displayName,
           uid: firebaseUser.uid,
           photoURL: firebaseUser.photoURL,
           email: firebaseUser.email,
+          rating: currentRating,
           isGuest: false
         };
         setUser(userData);
@@ -83,15 +101,20 @@ function App() {
     };
   }, []);
 
+  const [isRatedChallenge, setIsRatedChallenge] = useState(true);
+
   const sendChallenge = (targetUid) => {
     if (!user) return;
     setIsChallenging(true);
-    socket.emit("send_challenge", { targetUid, fromUser: user });
+    socket.emit("send_challenge", { targetUid, fromUser: user, isRated: isRatedChallenge });
   };
 
   const acceptChallenge = () => {
     if (!incomingChallenge) return;
-    socket.emit("accept_challenge", { fromUid: incomingChallenge.fromUid });
+    socket.emit("accept_challenge", {
+      fromUid: incomingChallenge.fromUid,
+      isRated: incomingChallenge.isRated
+    });
   };
 
   const rejectChallenge = () => {
@@ -183,7 +206,10 @@ function App() {
           <div className="flex items-center gap-4">
             <div className="flex flex-col items-end hidden sm:flex">
               <span className="text-sm font-bold text-gray-200">{user.name}</span>
-              <span className="text-[10px] text-gray-500 uppercase tracking-widest">{user.isGuest ? 'Guest' : 'Member'}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-blue-400 font-black">⚡ {user.rating || 400}</span>
+                <span className="text-[10px] text-gray-500 uppercase tracking-widest">{user.isGuest ? 'Guest' : 'Member'}</span>
+              </div>
             </div>
             <button
               onClick={() => setShowProfile(!showProfile)}
@@ -309,7 +335,10 @@ function App() {
                 </div>
                 <div>
                   <h4 className="text-lg font-bold">{user.name}</h4>
-                  <p className="text-gray-500 text-xs font-mono uppercase tracking-widest mt-1">ID: {user.uid.slice(0, 8)}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-black tracking-widest border border-blue-500/30">ELR: {user.rating || 400}</span>
+                    <p className="text-gray-500 text-[9px] font-mono uppercase tracking-widest">ID: {user.uid.slice(0, 8)}</p>
+                  </div>
                 </div>
               </div>
 
@@ -366,26 +395,45 @@ function App() {
               {/* Friends / Online Users */}
               {!user.isGuest && (
                 <div className="space-y-4">
-                  <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Active Agents</h5>
+                  <div className="flex justify-between items-center mb-3">
+                    <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Active Agents</h5>
+                    <div className="flex bg-gray-900 border border-gray-800 rounded-lg p-0.5 scale-90 origin-right">
+                      <button
+                        onClick={() => setIsRatedChallenge(true)}
+                        className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter transition-all ${isRatedChallenge ? 'bg-blue-600/20 text-blue-400 border border-blue-600/30' : 'text-gray-500'}`}
+                      >
+                        Rated
+                      </button>
+                      <button
+                        onClick={() => setIsRatedChallenge(false)}
+                        className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter transition-all ${!isRatedChallenge ? 'bg-purple-600/20 text-purple-400 border border-purple-600/30' : 'text-gray-500'}`}
+                      >
+                        Casual
+                      </button>
+                    </div>
+                  </div>
                   {onlineUsers.filter(u => u.uid !== user.uid).length > 0 ? (
                     <div className="space-y-2">
                       {onlineUsers.filter(u => u.uid !== user.uid).map((u) => (
-                        <div key={u.uid} className="flex items-center justify-between p-3 rounded-xl bg-gray-900/40 border border-gray-800">
+                        <div key={u.uid} className="flex items-center justify-between p-3 rounded-xl bg-gray-900/40 border border-gray-800 hover:border-gray-700 transition-all">
                           <div className="flex items-center gap-3">
                             <div className="relative">
                               <div className="w-8 h-8 rounded-lg bg-gray-700 overflow-hidden border border-gray-600">
-                                {u.photoURL ? <img src={u.photoURL} alt="" /> : <span className="flex items-center justify-center h-full text-xs font-bold text-gray-500">{u.name[0]}</span>}
+                                {u.photoURL ? <img src={u.photoURL} alt="" /> : <span className="flex items-center justify-center h-full text-xs font-bold text-gray-400">{u.name[0]}</span>}
                               </div>
-                              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-gray-800 animate-pulse"></div>
+                              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-gray-900 animate-pulse"></div>
                             </div>
-                            <span className="text-sm font-bold text-gray-300">{u.name}</span>
+                            <div className="flex flex-col">
+                              <span className="text-sm font-bold text-gray-300">{u.name}</span>
+                              <span className="text-[10px] text-blue-400 font-bold font-mono">⚡ {u.rating || 400}</span>
+                            </div>
                           </div>
                           <button
                             onClick={() => sendChallenge(u.uid)}
                             disabled={isChallenging}
-                            className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all active:scale-90"
+                            className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all active:scale-90 border ${isRatedChallenge ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-purple-600 hover:bg-purple-500 text-white'}`}
                           >
-                            {isChallenging ? "..." : "CHALLENGE"}
+                            {isChallenging ? "..." : "DUEL"}
                           </button>
                         </div>
                       ))}
@@ -447,8 +495,13 @@ function App() {
               )}
             </div>
             <div className="space-y-2">
-              <h3 className="text-xl font-black text-white uppercase tracking-tighter">Match Requested</h3>
-              <p className="text-gray-400 text-sm">**{incomingChallenge.fromName}** is challenging you to a duel!</p>
+              <h3 className="text-xl font-black text-white uppercase tracking-tighter italic">{incomingChallenge.fromName}</h3>
+              <div className="flex justify-center gap-2">
+                <span className="px-2 py-0.5 rounded bg-gray-800 text-[10px] font-black text-blue-400 border border-gray-700">⚡ {incomingChallenge.fromRating || 400}</span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest border ${incomingChallenge.isRated ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' : 'bg-purple-500/20 text-purple-400 border-purple-500/30'}`}>
+                  {incomingChallenge.isRated ? 'Rated Duel' : 'Casual Duel'}
+                </span>
+              </div>
             </div>
             <div className="flex gap-4">
               <button

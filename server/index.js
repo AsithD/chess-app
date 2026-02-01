@@ -32,13 +32,20 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
     cors: {
-        origin: "*", // Allow any origin to fix port 5173 vs 5174 issues
+        origin: "*",
         methods: ["GET", "POST"]
     }
 });
 
 const rooms = new Map();
-const onlineUsers = new Map(); // uid -> { socketId, name, photoURL }
+const onlineUsers = new Map(); // uid -> { socketId, name, photoURL, rating }
+
+// Elo calculation (K=32)
+function calculateNewRating(playerRating, opponentRating, score) {
+    const k = 32;
+    const expected = 1 / (1 + Math.pow(10, (opponentRating - playerRating) / 400));
+    return Math.round(playerRating + k * (score - expected));
+}
 
 io.on('connection', (socket) => {
     console.log(`User Connected: ${socket.id}`);
@@ -49,13 +56,15 @@ io.on('connection', (socket) => {
             onlineUsers.set(userData.uid, {
                 socketId: socket.id,
                 name: userData.name,
-                photoURL: userData.photoURL
+                photoURL: userData.photoURL,
+                rating: userData.rating || 400
             });
-            // Public list of online users (excluding passwords/emails etc)
+            // Public list of online users
             const list = Array.from(onlineUsers.entries()).map(([uid, data]) => ({
                 uid,
                 name: data.name,
-                photoURL: data.photoURL
+                photoURL: data.photoURL,
+                rating: data.rating
             }));
             io.emit("online_users_update", list);
         }
@@ -73,106 +82,99 @@ io.on('connection', (socket) => {
         io.emit("online_users_update", Array.from(onlineUsers.entries()).map(([uid, data]) => ({
             uid,
             name: data.name,
-            photoURL: data.photoURL
+            photoURL: data.photoURL,
+            rating: data.rating
         })));
+    });
+
+    socket.on("match_concluded", ({ room, winnerUid, isDraw }) => {
+        const roomData = rooms.get(room);
+        if (roomData && roomData.isRated) {
+            const playerIds = roomData.players;
+            if (playerIds.length < 2) return;
+
+            const uid1 = roomData.uids[playerIds[0]];
+            const uid2 = roomData.uids[playerIds[1]];
+
+            const user1 = onlineUsers.get(uid1);
+            const user2 = onlineUsers.get(uid2);
+
+            if (user1 && user2) {
+                const score1 = isDraw ? 0.5 : (winnerUid === uid1 ? 1 : 0);
+                const score2 = isDraw ? 0.5 : (winnerUid === uid2 ? 1 : 0);
+
+                const newR1 = calculateNewRating(user1.rating, user2.rating, score1);
+                const newR2 = calculateNewRating(user2.rating, user1.rating, score2);
+
+                user1.rating = newR1;
+                user2.rating = newR2;
+
+                // Broadcast new ratings
+                const list = Array.from(onlineUsers.entries()).map(([uid, data]) => ({
+                    uid,
+                    name: data.name,
+                    photoURL: data.photoURL,
+                    rating: data.rating
+                }));
+                io.emit("online_users_update", list);
+
+                // Notify specific players
+                io.to(playerIds[0]).emit("rating_update", { newRating: newR1 });
+                io.to(playerIds[1]).emit("rating_update", { newRating: newR2 });
+
+                console.log(`Elo Update: ${user1.name} (${newR1}), ${user2.name} (${newR2})`);
+            }
+        }
     });
 
     socket.on("create_room", ({ room, color }) => {
         const finalRoomName = room && room.trim() !== "" ? room : generateRoomName();
-
         if (rooms.has(finalRoomName) && room) {
             socket.emit("room_error", "Room already exists!");
             return;
         }
-
-        // If it was a random name and it exists (unlikely), generate again
         let attempts = 0;
         let finalName = finalRoomName;
         while (rooms.has(finalName) && !room && attempts < 5) {
             finalName = generateRoomName();
             attempts++;
         }
-
         const assignedColor = color === 'random' ? (Math.random() > 0.5 ? 'white' : 'black') : color;
-
         rooms.set(finalName, {
             players: [socket.id],
             colors: { [socket.id]: assignedColor },
-            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" // Initial FEN
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
         });
-
         socket.join(finalName);
         socket.emit("room_created", { room: finalName, color: assignedColor });
-        console.log(`Room created: ${finalName} by ${socket.id} as ${assignedColor}`);
     });
 
     socket.on("join_room", ({ room }) => {
         const roomData = rooms.get(room);
-
         if (!roomData) {
             socket.emit("room_error", "Room does not exist!");
             return;
         }
-
         if (roomData.players.length >= 2) {
             socket.emit("room_error", "Room is full!");
             return;
         }
-
-        // Determine color for the joiner
-        const creatorId = roomData.players[0];
-        const creatorColor = roomData.colors[creatorId];
-        const joinerColor = creatorColor === 'white' ? 'black' : 'white';
-
+        const assignedColor = roomData.colors[roomData.players[0]] === 'white' ? 'black' : 'white';
         roomData.players.push(socket.id);
-        roomData.colors[socket.id] = joinerColor;
-
+        roomData.colors[socket.id] = assignedColor;
         socket.join(room);
-
-        // Notify joiner with current game state
-        socket.emit("room_joined", {
-            room,
-            color: joinerColor,
-            fen: roomData.fen
-        });
-
-        // Notify creator (and joiner) that game serves can start/sync
-        socket.to(room).emit("user_joined", socket.id);
-        io.in(room).emit("game_start", {
-            players: roomData.players,
-            colors: roomData.colors,
-            fen: roomData.fen
-        });
-
-        console.log(`User ${socket.id} joined ${room} as ${joinerColor}`);
+        socket.emit("room_joined", { room, color: assignedColor, fen: roomData.fen });
+        io.in(room).emit("opponent_joined", { color: assignedColor, socketId: socket.id });
     });
 
-    socket.on("send_move", (data) => {
-        const roomData = rooms.get(data.room);
-        if (roomData) {
-            // Update FEN on server (Frontend sends the move, not FEN, so we might want to store FEN too)
-            // For now, let's assume the frontend will send the *new* FEN as well or we compute it.
-            // Actually, frontend current code sends { move, room }.
-            // Let's add 'fen' to the send_move payload in Game.jsx later.
-            if (data.newFen) roomData.fen = data.newFen;
-            socket.to(data.room).emit("receive_move", data.move);
-        }
-    });
-
-    socket.on("sync_board", ({ room, fen }) => {
+    socket.on("send_move", ({ room, move, fen }) => {
         const roomData = rooms.get(room);
         if (roomData) {
             roomData.fen = fen;
-            socket.to(room).emit("set_board", fen);
+            socket.to(room).emit("receive_move", move);
         }
     });
 
-    // Chat Events
-    socket.on("send_message", (data) => {
-        socket.to(data.room).emit("receive_message", data);
-    });
-
-    // Game Control Events
     socket.on("resign", ({ room }) => {
         socket.to(room).emit("opponent_resigned");
     });
@@ -182,11 +184,8 @@ io.on('connection', (socket) => {
     });
 
     socket.on("draw_response", ({ room, accepted }) => {
-        if (accepted) {
-            io.in(room).emit("game_draw");
-        } else {
-            socket.to(room).emit("draw_rejected");
-        }
+        if (accepted) io.in(room).emit("game_draw");
+        else socket.to(room).emit("draw_rejected");
     });
 
     socket.on("rematch_request", ({ room }) => {
@@ -196,78 +195,57 @@ io.on('connection', (socket) => {
     socket.on("rematch_accept", ({ room }) => {
         const roomData = rooms.get(room);
         if (roomData) {
-            // Reset FEN
             roomData.fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-            // Swap colors
             const p1 = roomData.players[0];
             const p2 = roomData.players[1];
-
-            const p1Color = roomData.colors[p1];
-            roomData.colors[p1] = p1Color === 'white' ? 'black' : 'white';
-
-            if (p2) {
-                const p2Color = roomData.colors[p2];
-                roomData.colors[p2] = p2Color === 'white' ? 'black' : 'white';
-            }
-
-            io.in(room).emit("game_reset", {
-                colors: roomData.colors,
-                fen: roomData.fen
-            });
+            roomData.colors[p1] = roomData.colors[p1] === 'white' ? 'black' : 'white';
+            if (p2) roomData.colors[p2] = roomData.colors[p2] === 'white' ? 'black' : 'white';
+            io.in(room).emit("game_reset", { colors: roomData.colors, fen: roomData.fen });
         }
     });
 
-    socket.on("send_challenge", ({ targetUid, fromUser }) => {
+    socket.on("send_challenge", ({ targetUid, fromUser, isRated }) => {
         const target = onlineUsers.get(targetUid);
         if (target) {
             io.to(target.socketId).emit("challenge_received", {
                 fromUid: fromUser.uid,
                 fromName: fromUser.name,
-                fromPhoto: fromUser.photoURL
+                fromPhoto: fromUser.photoURL,
+                fromRating: fromUser.rating,
+                isRated: isRated
             });
         }
     });
 
-    socket.on("accept_challenge", ({ fromUid }) => {
+    socket.on("accept_challenge", ({ fromUid, isRated }) => {
         const challenger = onlineUsers.get(fromUid);
         if (challenger && challenger.socketId) {
             const roomName = `challenge-${Math.random().toString(36).substr(2, 7)}`;
-
-            // Initialize Room Data
             rooms.set(roomName, {
                 players: [challenger.socketId, socket.id],
-                colors: {
-                    [challenger.socketId]: "white",
-                    [socket.id]: "black"
-                },
-                fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                colors: { [challenger.socketId]: "white", [socket.id]: "black" },
+                fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                isRated: isRated,
+                uids: {
+                    [challenger.socketId]: fromUid,
+                    [socket.id]: Array.from(onlineUsers.entries()).find(([uid, data]) => data.socketId === socket.id)?.[0]
+                }
             });
-
-            // Make both sockets join the room at the socket level
             const challengerSocket = io.sockets.sockets.get(challenger.socketId);
             if (challengerSocket) challengerSocket.join(roomName);
             socket.join(roomName);
-
-            // Notify both to start the game
-            io.to(challenger.socketId).emit("challenge_accepted", { room: roomName, color: "white" });
-            socket.emit("challenge_accepted", { room: roomName, color: "black" });
-
-            console.log(`Challenge Match Started: ${roomName} between ${challenger.socketId} and ${socket.id}`);
+            io.to(challenger.socketId).emit("challenge_accepted", { room: roomName, color: "white", isRated });
+            socket.emit("challenge_accepted", { room: roomName, color: "black", isRated });
         }
     });
 
     socket.on("reject_challenge", ({ fromUid }) => {
         const challenger = onlineUsers.get(fromUid);
-        if (challenger) {
-            io.to(challenger.socketId).emit("challenge_rejected");
-        }
+        if (challenger) io.to(challenger.socketId).emit("challenge_rejected");
     });
 });
 
 const PORT = process.env.PORT || 3001;
-
 server.listen(PORT, () => {
-    console.log("SERVER RUNNING ON PORT", PORT);
+    console.log(`Server running on port ${PORT}`);
 });
-

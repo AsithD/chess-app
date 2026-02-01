@@ -9,7 +9,50 @@ import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 function Game({ room, socket, orientation, initialData, user }) {
     const [fen, setFen] = useState(() => initialData?.fen || new Chess().fen());
     const [waiting, setWaiting] = useState(() => initialData?.waiting ?? true);
-    // Use a ref to keep track of fen without triggering re-renders in effects that only need *current* value
+    const [moveHistory, setMoveHistory] = useState(() => [initialData?.fen || new Chess().fen()]);
+    const [viewingIndex, setViewingIndex] = useState(-1); // -1 means live game
+    const [evaluations, setEvaluations] = useState([]); // Store labels like 'Blunder', 'Best'
+
+    // Analyze move using js-chess-engine
+    const analyzeMove = useCallback((prevFen, currentFen, move) => {
+        try {
+            // Get best move from engine
+            const engineResult = aiMove(prevFen, 1); // Depth 1 for speed
+            const bestMoveFrom = Object.keys(engineResult)[0];
+            const bestMoveTo = engineResult[bestMoveFrom];
+
+            const userMoveStr = (move.from + move.to).toUpperCase();
+            const bestMoveStr = (bestMoveFrom + bestMoveTo).toUpperCase();
+
+            if (userMoveStr === bestMoveStr) return "Best";
+
+            const game = new Chess(prevFen);
+            const moveResult = game.move(move);
+            if (!moveResult) return "Book";
+
+            // If it captures a major piece but engine wanted something else, maybe just "Good"
+            if (moveResult.captured && ['q', 'r'].includes(moveResult.captured)) return "Good";
+
+            // Check for obvious blunders (giving away queen)
+            const currentBoard = new Chess(currentFen);
+            const turn = currentBoard.turn();
+            // If it's now opponent's turn, see if they can take our queen
+            const moves = currentBoard.moves({ verbose: true });
+            for (const m of moves) {
+                if (m.captured === 'q') return "Blunder";
+            }
+
+            return "Inaccuracy";
+        } catch (e) {
+            return "Book";
+        }
+    }, []);
+
+    const getEvalLabel = (index) => {
+        if (index <= 0) return "";
+        return evaluations[index - 1] || "Book";
+    };
+
     const fenRef = useRef(fen);
 
     useEffect(() => {
@@ -24,7 +67,11 @@ function Game({ room, socket, orientation, initialData, user }) {
                     const game = new Chess(prevFen);
                     const result = game.move(move);
                     if (result) {
-                        return game.fen();
+                        const newFen = game.fen();
+                        const label = analyzeMove(prevFen, newFen, move);
+                        setEvaluations(prev => [...prev, label]);
+                        setMoveHistory(prev => [...prev.slice(0, viewingIndex === -1 ? prev.length : viewingIndex + 1), newFen]);
+                        return newFen;
                     }
                 } catch (e) {
                     console.error("Invalid move received:", move, e);
@@ -91,14 +138,17 @@ function Game({ room, socket, orientation, initialData, user }) {
 
             if (result) {
                 const newFen = game.fen();
+                const label = analyzeMove(fen, newFen, moveConfig);
+                setEvaluations(prev => [...prev, label]);
                 setFen(newFen);
+                setMoveHistory(prev => [...prev.slice(0, viewingIndex === -1 ? prev.length : viewingIndex + 1), newFen]);
                 socket.emit("send_move", {
                     move: {
                         from: result.from,
                         to: result.to,
                         promotion: result.promotion
                     },
-                    newFen, // Sync FEN with server
+                    fen: newFen, // Sync FEN with server
                     room
                 });
                 return true;
@@ -112,6 +162,17 @@ function Game({ room, socket, orientation, initialData, user }) {
 
     const saveMatch = async (resultTitle, resultMessage) => {
         if (!user || user.isGuest) return;
+
+        // Emit to server for Elo calculation if it's a rated match
+        const isDraw = resultTitle === "Draw" || resultTitle === "It's a Draw!";
+        const winnerUid = resultTitle === "You Won!" ? user.uid : (resultTitle === "You Lost!" ? "opponent" : null);
+
+        socket.emit("match_concluded", {
+            room,
+            winnerUid,
+            isDraw
+        });
+
         try {
             await addDoc(collection(db, "matches"), {
                 uid: user.uid,
@@ -121,7 +182,8 @@ function Game({ room, socket, orientation, initialData, user }) {
                 message: resultMessage,
                 timestamp: serverTimestamp(),
                 color: orientation,
-                fen: fenRef.current
+                fen: fenRef.current,
+                moveHistory: moveHistory // Full move-by-move FENs
             });
             console.log("Match saved successfully");
         } catch (e) {
@@ -213,12 +275,23 @@ function Game({ room, socket, orientation, initialData, user }) {
             }));
         });
 
+        socket.on("rating_update", ({ newRating }) => {
+            console.log("Rating Update received:", newRating);
+            if (user && !user.isGuest) {
+                const userRef = doc(db, "users", user.uid);
+                setDoc(userRef, { rating: newRating }, { merge: true })
+                    .then(() => console.log("Firestore rating updated!"))
+                    .catch(e => console.error("Error updating Firestore rating:", e));
+            }
+        });
+
         return () => {
             socket.off("opponent_resigned");
             socket.off("draw_offered");
             socket.off("draw_rejected");
             socket.off("game_draw");
             socket.off("rematch_requested");
+            socket.off("rating_update");
         };
     }, [socket, room]);
 
@@ -280,13 +353,87 @@ function Game({ room, socket, orientation, initialData, user }) {
 
                 <div className="w-full aspect-square shadow-2xl rounded-lg border-4 border-gray-700 relative">
                     <Chessboard
-                        position={fen}
+                        position={viewingIndex === -1 ? fen : moveHistory[viewingIndex]}
                         onPieceDrop={onDrop}
                         boardOrientation={orientation}
                         customDarkSquareStyle={{ backgroundColor: "#779556" }}
                         customLightSquareStyle={{ backgroundColor: "#ebecd0" }}
+                        customSquareStyles={{
+                            ...(new Chess(viewingIndex === -1 ? fen : moveHistory[viewingIndex]).inCheck() ? {
+                                [(() => {
+                                    const g = new Chess(viewingIndex === -1 ? fen : moveHistory[viewingIndex]);
+                                    const turn = g.turn();
+                                    // Find king position
+                                    for (let r = 0; r < 8; r++) {
+                                        for (let c = 0; c < 8; c++) {
+                                            const square = String.fromCharCode(97 + c) + (8 - r);
+                                            const piece = g.get(square);
+                                            if (piece && piece.type === 'k' && piece.color === turn) return square;
+                                        }
+                                    }
+                                })()]: {
+                                    background: "radial-gradient(circle, rgba(255,0,0,0.5) 0%, rgba(255,0,0,0) 70%)",
+                                    borderRadius: "50%"
+                                }
+                            } : {})
+                        }}
                         animationDuration={200}
+                        areArrowsAllowed={true}
                     />
+
+                    {/* Move Navigation Overlay (Small floating controls) */}
+                    {moveHistory.length > 1 && (
+                        <div className="absolute -bottom-14 left-0 right-0 flex justify-center items-center gap-1 bg-gray-900 border border-gray-700 p-1 rounded-xl shadow-xl z-30">
+                            <button
+                                onClick={() => setViewingIndex(0)}
+                                className="px-3 py-1.5 hover:bg-gray-800 text-gray-400 rounded-lg text-xs font-bold transition"
+                                title="Start"
+                            >
+                                |◀
+                            </button>
+                            <button
+                                onClick={() => setViewingIndex(Math.max(0, (viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex) - 1))}
+                                className="px-4 py-1.5 hover:bg-gray-800 text-gray-200 rounded-lg text-sm font-bold transition"
+                                title="Previous"
+                            >
+                                ◀
+                            </button>
+                            {/* Move Quality Label - Floating above navigation */}
+                            {(viewingIndex !== 0) && (
+                                <div className={`absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all duration-300 animate-bounce ${getEvalLabel(viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex) === 'Best' ? 'bg-green-500/20 text-green-400 border-green-500/30 shadow-[0_0_15px_rgba(34,197,94,0.3)]' :
+                                        getEvalLabel(viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex) === 'Good' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                                            getEvalLabel(viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex) === 'Blunder' ? 'bg-red-500/20 text-red-400 border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.3)]' :
+                                                'bg-gray-800 text-gray-500 border-gray-700'
+                                    }`}>
+                                    {getEvalLabel(viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex)}
+                                </div>
+                            )}
+
+                            <div className="px-4 text-[10px] font-mono font-black text-blue-400 uppercase tracking-widest">
+                                {viewingIndex === -1 ? `LIVE (${moveHistory.length - 1})` : `MOVE ${viewingIndex} / ${moveHistory.length - 1}`}
+                            </div>
+                            <button
+                                onClick={() => {
+                                    if (viewingIndex !== -1) {
+                                        const next = viewingIndex + 1;
+                                        if (next >= moveHistory.length - 1) setViewingIndex(-1);
+                                        else setViewingIndex(next);
+                                    }
+                                }}
+                                className="px-4 py-1.5 hover:bg-gray-800 text-gray-200 rounded-lg text-sm font-bold transition"
+                                title="Next"
+                            >
+                                ▶
+                            </button>
+                            <button
+                                onClick={() => setViewingIndex(-1)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${viewingIndex === -1 ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'hover:bg-gray-800 text-gray-400'}`}
+                                title="Live"
+                            >
+                                ▶|
+                            </button>
+                        </div>
+                    )}
 
                     {/* Waiting Overlay */}
                     {waiting && (
@@ -299,38 +446,54 @@ function Game({ room, socket, orientation, initialData, user }) {
                                 </div>
                                 <h3 className="text-xl font-bold text-white uppercase tracking-wider">Waiting for Opponent</h3>
                                 <p className="text-gray-400 text-sm">Share room name: <span className="text-blue-400 font-mono font-bold">{room}</span></p>
+                                <button
+                                    onClick={() => window.location.reload()}
+                                    className="mt-2 text-xs text-red-400 hover:text-red-300 font-black uppercase tracking-widest transition"
+                                >
+                                    Abort Mission
+                                </button>
                             </div>
                         </div>
                     )}
 
                     {/* Game Over Overlay */}
                     {gameResult && (
-                        <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 animate-in fade-in duration-300">
-                            <h2 className="text-4xl font-bold text-white mb-2">{gameResult.title}</h2>
-                            <p className="text-gray-300 text-lg mb-6">{gameResult.message}</p>
+                        <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 animate-in fade-in zoom-in duration-500 overflow-hidden">
+                            <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-transparent via-blue-500 to-transparent animate-pulse"></div>
 
-                            <div className="flex gap-4">
+                            <div className="relative group">
+                                <div className="absolute -inset-4 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
+                                <h2 className="text-6xl font-black text-white mb-2 tracking-tighter uppercase italic select-none">
+                                    {gameResult.title}
+                                </h2>
+                            </div>
+
+                            <p className="text-gray-400 text-sm font-mono uppercase tracking-[0.3em] mb-8 bg-gray-900/50 px-4 py-1 rounded-full border border-gray-800">
+                                {gameResult.message}
+                            </p>
+
+                            <div className="flex flex-col gap-3 w-64">
                                 {gameResult.isRematchRequest ? (
                                     <button
                                         onClick={handleRematchAccept}
-                                        className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition"
+                                        className="w-full py-4 bg-green-600 hover:bg-green-500 text-white rounded-xl font-black uppercase tracking-widest transition shadow-lg shadow-green-900/40 active:scale-95"
                                     >
-                                        Accept Rematch
+                                        Accept Duel
                                     </button>
                                 ) : (
                                     <button
                                         onClick={handleRematchRequest}
-                                        className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition"
+                                        className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black uppercase tracking-widest transition shadow-lg shadow-blue-900/40 active:scale-95"
                                     >
-                                        Play Again
+                                        Request Rematch
                                     </button>
                                 )}
 
                                 <button
                                     onClick={() => window.location.reload()}
-                                    className="px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-semibold transition"
+                                    className="w-full py-4 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-xl font-black uppercase tracking-widest transition active:scale-95"
                                 >
-                                    Leave Room
+                                    Withdraw
                                 </button>
                             </div>
                         </div>
