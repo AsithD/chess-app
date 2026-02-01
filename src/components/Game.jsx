@@ -80,22 +80,22 @@ function Game({ room, socket, orientation, initialData, user }) {
     useEffect(() => {
         const onReceiveMove = (move) => {
             console.log("Received move:", move);
-            setFen((prevFen) => {
-                try {
-                    const game = new Chess(prevFen);
-                    const result = game.move(move);
-                    if (result) {
-                        const newFen = game.fen();
-                        const label = analyzeMove(prevFen, newFen, move);
-                        setEvaluations(prev => [...prev, label]);
-                        setMoveHistory(prev => [...prev.slice(0, viewingIndex === -1 ? prev.length : viewingIndex + 1), newFen]);
-                        return newFen;
-                    }
-                } catch (e) {
-                    console.error("Invalid move received:", move, e);
+            try {
+                const game = new Chess(fenRef.current);
+                const result = game.move(move);
+                if (result) {
+                    const newFen = game.fen();
+                    console.log("Move applied, new FEN:", newFen, "Turn:", game.turn());
+                    const label = analyzeMove(fenRef.current, newFen, move);
+                    setEvaluations(prev => [...prev, label]);
+                    setMoveHistory(prev => [...prev, newFen]);
+                    setFen(newFen);
+                } else {
+                    console.error("Move failed to apply:", move);
                 }
-                return prevFen;
-            });
+            } catch (e) {
+                console.error("Invalid move received:", move, e);
+            }
         };
 
         const onUserJoined = (id) => {
@@ -169,10 +169,18 @@ function Game({ room, socket, orientation, initialData, user }) {
             let result = null;
             let moveConfig = { from: sourceSquare, to: targetSquare };
 
+            console.log("onDrop - Turn:", game.turn(), "Orientation:", orientation, "Waiting:", waiting);
+
             try {
                 // Validate turn logic
-                if (game.turn() === 'w' && orientation === 'black') return false;
-                if (game.turn() === 'b' && orientation === 'white') return false;
+                if (game.turn() === 'w' && orientation === 'black') {
+                    console.log("Blocked: White's turn but player is black");
+                    return false;
+                }
+                if (game.turn() === 'b' && orientation === 'white') {
+                    console.log("Blocked: Black's turn but player is white");
+                    return false;
+                }
 
                 // Try simple move
                 result = game.move(moveConfig);
