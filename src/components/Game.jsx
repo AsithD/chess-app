@@ -167,6 +167,7 @@ function Game({ room, socket, orientation, initialData, user }) {
         try {
             const game = new Chess(fen);
             let result = null;
+            let moveConfig = { from: sourceSquare, to: targetSquare };
 
             try {
                 // Validate turn logic
@@ -174,13 +175,12 @@ function Game({ room, socket, orientation, initialData, user }) {
                 if (game.turn() === 'b' && orientation === 'white') return false;
 
                 // Try simple move
-                const moveConfig = { from: sourceSquare, to: targetSquare };
                 result = game.move(moveConfig);
             } catch (e) {
                 // If failed, try with promotion
                 try {
-                    const promotionConfig = { from: sourceSquare, to: targetSquare, promotion: 'q' };
-                    result = game.move(promotionConfig);
+                    moveConfig = { from: sourceSquare, to: targetSquare, promotion: 'q' };
+                    result = game.move(moveConfig);
                 } catch (e2) {
                     return false;
                 }
