@@ -127,7 +127,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on("create_room", ({ room, color }) => {
+    socket.on("create_room", ({ room, color, uid }) => {
         const finalRoomName = room && room.trim() !== "" ? room : generateRoomName();
         if (rooms.has(finalRoomName) && room) {
             socket.emit("room_error", "Room already exists!");
@@ -143,6 +143,8 @@ io.on('connection', (socket) => {
         rooms.set(finalName, {
             players: [socket.id],
             colors: { [socket.id]: assignedColor },
+            uids: { [socket.id]: uid },
+            uidToColor: { [uid]: assignedColor },
             fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             moveHistory: ["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"],
             evaluations: []
@@ -151,7 +153,49 @@ io.on('connection', (socket) => {
         socket.emit("room_created", { room: finalName, color: assignedColor });
     });
 
-    socket.on("join_room", ({ room }) => {
+    // Rejoin room after refresh
+    socket.on("rejoin_room", ({ room, uid }) => {
+        const roomData = rooms.get(room);
+        if (!roomData) {
+            socket.emit("room_error", "Room does not exist!");
+            return;
+        }
+
+        // Check if this UID was in this room
+        const color = roomData.uidToColor?.[uid];
+        if (!color) {
+            socket.emit("room_error", "You were not in this room!");
+            return;
+        }
+
+        // Update the socket ID for this player
+        const oldSocketId = Object.keys(roomData.uids || {}).find(sid => roomData.uids[sid] === uid);
+        if (oldSocketId) {
+            // Remove old socket id from players
+            roomData.players = roomData.players.filter(p => p !== oldSocketId);
+            delete roomData.colors[oldSocketId];
+            delete roomData.uids[oldSocketId];
+        }
+
+        // Add new socket
+        roomData.players.push(socket.id);
+        roomData.colors[socket.id] = color;
+        roomData.uids = roomData.uids || {};
+        roomData.uids[socket.id] = uid;
+
+        socket.join(room);
+        socket.emit("room_rejoined", {
+            room,
+            color,
+            fen: roomData.fen,
+            moveHistory: roomData.moveHistory,
+            evaluations: roomData.evaluations
+        });
+
+        console.log(`User ${uid} rejoined room ${room} as ${color}`);
+    });
+
+    socket.on("join_room", ({ room, uid }) => {
         const roomData = rooms.get(room);
         if (!roomData) {
             socket.emit("room_error", "Room does not exist!");
@@ -164,6 +208,10 @@ io.on('connection', (socket) => {
         const assignedColor = roomData.colors[roomData.players[0]] === 'white' ? 'black' : 'white';
         roomData.players.push(socket.id);
         roomData.colors[socket.id] = assignedColor;
+        roomData.uids = roomData.uids || {};
+        roomData.uids[socket.id] = uid;
+        roomData.uidToColor = roomData.uidToColor || {};
+        roomData.uidToColor[uid] = assignedColor;
         socket.join(room);
 
         // Use user_joined for Consistency with Game.jsx
@@ -176,7 +224,7 @@ io.on('connection', (socket) => {
         });
         socket.to(room).emit("user_joined", socket.id);
 
-        console.log(`User ${socket.id} joined room ${room} as ${assignedColor}`);
+        console.log(`User ${socket.id} (${uid}) joined room ${room} as ${assignedColor}`);
     });
 
     socket.on("send_move", ({ room, move, fen, label }) => {

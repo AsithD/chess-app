@@ -4,7 +4,7 @@ import { Chessboard } from "react-chessboard";
 import Chat from "./Chat";
 import { aiMove } from "js-chess-engine";
 import { db } from "../utils/firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, doc, setDoc, serverTimestamp } from "firebase/firestore";
 
 function Game({ room, socket, orientation, initialData, user }) {
     const [fen, setFen] = useState(() => initialData?.fen || new Chess().fen());

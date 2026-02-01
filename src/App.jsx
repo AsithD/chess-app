@@ -138,12 +138,12 @@ function App() {
   const [showProfile, setShowProfile] = useState(false);
 
   const handleCreateRequest = () => {
-    socket.emit("create_room", { room, color: selectedColor });
+    socket.emit("create_room", { room, color: selectedColor, uid: user?.uid });
   };
 
   const handleJoinRequest = () => {
     if (!room) return;
-    socket.emit("join_room", { room });
+    socket.emit("join_room", { room, uid: user?.uid });
   };
 
   const [initialData, setInitialData] = useState({});
@@ -168,6 +168,8 @@ function App() {
       setPlayerColor(color);
       setInitialData({ waiting: true });
       setError("");
+      // Save session for rejoin on refresh
+      localStorage.setItem('chess_session', JSON.stringify({ room, color }));
     });
 
     socket.on("room_joined", ({ room, color, fen, moveHistory, evaluations }) => {
@@ -176,10 +178,23 @@ function App() {
       setPlayerColor(color);
       setInitialData({ waiting: false, fen, moveHistory, evaluations });
       setError("");
+      // Save session for rejoin on refresh
+      localStorage.setItem('chess_session', JSON.stringify({ room, color }));
+    });
+
+    socket.on("room_rejoined", ({ room, color, fen, moveHistory, evaluations }) => {
+      setIsInGame(true);
+      setRoom(room);
+      setPlayerColor(color);
+      setInitialData({ waiting: false, fen, moveHistory, evaluations });
+      setError("");
+      setGameKey(prev => prev + 1);
     });
 
     socket.on("room_error", (msg) => {
       setError(msg);
+      // Clear session if room no longer exists
+      localStorage.removeItem('chess_session');
       setTimeout(() => setError(""), 3000);
     });
 
@@ -192,6 +207,7 @@ function App() {
     return () => {
       socket.off("room_created");
       socket.off("room_joined");
+      socket.off("room_rejoined");
       socket.off("room_error");
       socket.off("game_reset");
     }
@@ -199,6 +215,23 @@ function App() {
 
   // Key to force re-render of Game component on rematch
   const [gameKey, setGameKey] = useState(0);
+
+  // Try to rejoin session on page load
+  useEffect(() => {
+    if (user && !isInGame) {
+      const savedSession = localStorage.getItem('chess_session');
+      if (savedSession) {
+        try {
+          const { room } = JSON.parse(savedSession);
+          if (room) {
+            socket.emit("rejoin_room", { room, uid: user.uid });
+          }
+        } catch (e) {
+          localStorage.removeItem('chess_session');
+        }
+      }
+    }
+  }, [user, isInGame]);
 
   if (authLoading) return (
     <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center gap-4">
