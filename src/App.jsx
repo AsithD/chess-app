@@ -2,10 +2,53 @@ import { useState, useEffect } from 'react';
 import Game from './components/Game';
 import Auth from './components/Auth';
 import socket from './utils/socket';
+import { auth, db, logout as firebaseLogout } from './utils/firebase';
+import { collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
 import './index.css';
 
 function App() {
   const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [history, setHistory] = useState([]);
+
+  useEffect(() => {
+    let unsubscribeHistory;
+    const unsubscribeAuth = auth.onAuthStateChanged((firebaseUser) => {
+      if (firebaseUser) {
+        const userData = {
+          name: firebaseUser.displayName,
+          uid: firebaseUser.uid,
+          photoURL: firebaseUser.photoURL,
+          email: firebaseUser.email,
+          isGuest: false
+        };
+        setUser(userData);
+
+        // Fetch History
+        const q = query(
+          collection(db, "matches"),
+          where("uid", "==", firebaseUser.uid),
+          orderBy("timestamp", "desc"),
+          limit(10)
+        );
+        unsubscribeHistory = onSnapshot(q, (snapshot) => {
+          setHistory(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+      }
+      setAuthLoading(false);
+    });
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeHistory) unsubscribeHistory();
+    };
+  }, []);
+
+  const handleLogout = () => {
+    firebaseLogout();
+    setUser(null);
+    setIsInGame(false);
+    setShowProfile(false);
+  };
   const [room, setRoom] = useState("");
   const [isInGame, setIsInGame] = useState(false);
   const [playerColor, setPlayerColor] = useState(null);
@@ -63,6 +106,13 @@ function App() {
 
   // Key to force re-render of Game component on rematch
   const [gameKey, setGameKey] = useState(0);
+
+  if (authLoading) return (
+    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center gap-4">
+      <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+      <p className="text-gray-500 font-mono text-xs uppercase tracking-[0.3em]">Synching Neural Link...</p>
+    </div>
+  );
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-900 text-white font-sans selection:bg-blue-500/30">

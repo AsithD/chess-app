@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { loginWithGoogle } from "../utils/firebase";
 
 function Auth({ onAuthSuccess }) {
     const [isGuest, setIsGuest] = useState(false);
     const [guestName, setGuestName] = useState("");
+    const [loading, setLoading] = useState(false);
 
     const handleGuestLogin = () => {
         if (!guestName.trim()) return;
@@ -13,9 +15,22 @@ function Auth({ onAuthSuccess }) {
         });
     };
 
-    const handleGoogleLogin = () => {
-        // This will be implemented once Firebase config is provided
-        alert("Google Login will be active soon! Please use Guest for now.");
+    const handleGoogleLogin = async () => {
+        setLoading(true);
+        try {
+            const user = await loginWithGoogle();
+            onAuthSuccess({
+                name: user.displayName,
+                uid: user.uid,
+                photoURL: user.photoURL,
+                email: user.email,
+                isGuest: false
+            });
+        } catch (error) {
+            alert("Login failed. Check if Google Auth is enabled in Firebase!");
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -29,10 +44,11 @@ function Auth({ onAuthSuccess }) {
                 <div className="space-y-4">
                     <button
                         onClick={handleGoogleLogin}
-                        className="w-full flex items-center justify-center gap-3 bg-white hover:bg-gray-100 text-gray-900 font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95"
+                        disabled={loading}
+                        className="w-full flex items-center justify-center gap-3 bg-white hover:bg-gray-100 disabled:opacity-50 text-gray-900 font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95"
                     >
                         <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/action/google.svg" alt="G" className="w-5 h-5" />
-                        Continue with Google
+                        {loading ? "Establishing Link..." : "Continue with Google"}
                     </button>
 
                     <div className="relative flex py-3 items-center">

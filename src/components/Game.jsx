@@ -3,6 +3,8 @@ import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import Chat from "./Chat";
 import { aiMove } from "js-chess-engine";
+import { db } from "../utils/firebase";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 function Game({ room, socket, orientation, initialData }) {
     const [fen, setFen] = useState(() => initialData?.fen || new Chess().fen());
@@ -108,12 +110,45 @@ function Game({ room, socket, orientation, initialData }) {
         return false;
     }
 
+    const saveMatch = async (resultTitle, resultMessage) => {
+        if (!user || user.isGuest) return;
+        try {
+            await addDoc(collection(db, "matches"), {
+                uid: user.uid,
+                username: user.name,
+                room,
+                result: resultTitle,
+                message: resultMessage,
+                timestamp: serverTimestamp(),
+                color: orientation,
+                fen: fenRef.current
+            });
+            console.log("Match saved successfully");
+        } catch (e) {
+            console.error("Error saving match:", e);
+        }
+    };
+
     // Helper to get game status text
     const getGameStatus = () => {
         try {
             const game = new Chess(fen);
-            if (game.isCheckmate()) return "Checkmate!";
-            if (game.isDraw()) return "Draw";
+            if (game.isCheckmate()) {
+                const winner = game.turn() === 'w' ? 'Black' : 'White';
+                if (!gameResult) {
+                    const title = winner === orientation.charAt(0).toUpperCase() + orientation.slice(1) ? "You Won!" : "You Lost!";
+                    setGameResult({ title, message: `Checkmate by ${winner}` });
+                    saveMatch(title, `Checkmate by ${winner}`);
+                }
+                return "Checkmate!";
+            }
+            if (game.isDraw()) {
+                if (!gameResult) {
+                    setGameResult({ title: "Draw", message: "Game drawn." });
+                    saveMatch("Draw", "Game drawn.");
+                }
+                return "Draw";
+            }
             return game.turn() === 'w' ? "White's Turn" : "Black's Turn";
         } catch (e) {
             return "Start Game";
@@ -149,6 +184,7 @@ function Game({ room, socket, orientation, initialData }) {
     useEffect(() => {
         socket.on("opponent_resigned", () => {
             setGameResult({ title: "You Won!", message: "Opponent resigned." });
+            saveMatch("You Won!", "Opponent resigned.");
         });
 
         socket.on("draw_offered", () => {
@@ -166,6 +202,7 @@ function Game({ room, socket, orientation, initialData }) {
 
         socket.on("game_draw", () => {
             setGameResult({ title: "It's a Draw!", message: "Game ended by agreement." });
+            saveMatch("It's a Draw!", "Game ended by agreement.");
         });
 
         socket.on("rematch_requested", () => {
@@ -189,6 +226,7 @@ function Game({ room, socket, orientation, initialData }) {
         if (window.confirm("Are you sure you want to resign?")) {
             socket.emit("resign", { room });
             setGameResult({ title: "Game Over", message: "You resigned." });
+            saveMatch("Game Over", "You resigned.");
         }
     };
 
