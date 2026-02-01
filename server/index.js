@@ -7,6 +7,15 @@ const path = require('path');
 
 app.use(cors());
 
+const ADRIVES = ["Swift", "Bold", "Cunning", "Silver", "Gold", "Shadow", "Royal", "Fierce", "Noble", "Ancient"];
+const CHESS_NOUNS = ["Pawn", "Bishop", "Knight", "Rook", "Queen", "King", "Gambit", "Mate", "Square", "Rank"];
+
+function generateRoomName() {
+    const adj = ADRIVES[Math.floor(Math.random() * ADRIVES.length)];
+    const noun = CHESS_NOUNS[Math.floor(Math.random() * CHESS_NOUNS.length)];
+    return `${adj}${noun}${Math.floor(Math.random() * 99)}`;
+}
+
 // Serve static files from the Vite build directory
 app.use(express.static(path.join(__dirname, '..', 'dist')));
 
@@ -34,22 +43,32 @@ io.on('connection', (socket) => {
     console.log(`User Connected: ${socket.id}`);
 
     socket.on("create_room", ({ room, color }) => {
-        if (rooms.has(room)) {
+        const finalRoomName = room && room.trim() !== "" ? room : generateRoomName();
+
+        if (rooms.has(finalRoomName) && room) {
             socket.emit("room_error", "Room already exists!");
             return;
         }
 
+        // If it was a random name and it exists (unlikely), generate again
+        let attempts = 0;
+        let finalName = finalRoomName;
+        while (rooms.has(finalName) && !room && attempts < 5) {
+            finalName = generateRoomName();
+            attempts++;
+        }
+
         const assignedColor = color === 'random' ? (Math.random() > 0.5 ? 'white' : 'black') : color;
 
-        rooms.set(room, {
+        rooms.set(finalName, {
             players: [socket.id],
             colors: { [socket.id]: assignedColor },
             fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" // Initial FEN
         });
 
-        socket.join(room);
-        socket.emit("room_created", { room, color: assignedColor });
-        console.log(`Room created: ${room} by ${socket.id} as ${assignedColor}`);
+        socket.join(finalName);
+        socket.emit("room_created", { room: finalName, color: assignedColor });
+        console.log(`Room created: ${finalName} by ${socket.id} as ${assignedColor}`);
     });
 
     socket.on("join_room", ({ room }) => {

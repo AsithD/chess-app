@@ -13,6 +13,7 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",
     "chess.js": "^1.4.0",
+    "firebase": "^12.8.0",
     "js-chess-engine": "^1.0.2",
     "react": "^18.3.1",
     "react-chessboard": "^4.3.1",

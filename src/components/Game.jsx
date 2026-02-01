@@ -211,9 +211,9 @@ function Game({ room, socket, orientation, initialData }) {
             <div className="flex flex-col items-center gap-8 w-full max-w-2xl">
                 <div className="w-full flex justify-between items-center bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-lg">
                     <div className="flex items-center gap-4">
-                        <h2 className="text-xl font-bold text-white">Room: <span className="text-blue-400">{room}</span></h2>
-                        <div className="text-sm font-mono text-gray-500 bg-gray-900 px-2 py-1 rounded">
-                            <span className={orientation === 'white' ? "text-white" : "text-gray-400"}>You: {orientation}</span>
+                        <div className="flex flex-col">
+                            <h2 className="text-sm font-black text-gray-500 uppercase tracking-widest">Room: <span className="text-blue-400">{room}</span></h2>
+                            <h3 className="text-lg font-bold text-white">{user?.name || "Player"} <span className="text-xs text-gray-500 font-normal">({orientation})</span></h3>
                         </div>
                     </div>
                     <div className="text-gray-400 font-semibold">
