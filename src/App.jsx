@@ -60,14 +60,17 @@ function App() {
       setPlayerColor(color);
       setInitialData({ waiting: false });
       setIsInGame(true);
+      setGameKey(prev => prev + 1); // Force clean board reset
       setIncomingChallenge(null);
       setIsChallenging(false);
       setShowProfile(false);
     });
 
     socket.on("challenge_rejected", () => {
-      alert("Challenge rejected.");
       setIsChallenging(false);
+      // Optional: show a toast or message instead of an alert
+      setError("Challenge rejected by the other agent.");
+      setTimeout(() => setError(""), 3000);
     });
 
     return () => {
@@ -401,6 +404,32 @@ function App() {
                 Terminate Session
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Outgoing Challenge Overlay (Searching) */}
+      {isChallenging && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-md" />
+          <div className="relative bg-gray-900/80 border border-blue-500/50 p-10 rounded-3xl shadow-2xl max-w-sm w-full text-center space-y-6">
+            <div className="relative w-24 h-24 mx-auto">
+              <div className="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
+              <div className="absolute inset-0 border-4 border-t-blue-500 rounded-full animate-spin"></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-3xl animate-pulse">📡</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-black text-white uppercase tracking-tighter">Transmission Sent</h3>
+              <p className="text-gray-400 text-sm font-medium">Waiting for the other agent to respond to your duel request...</p>
+            </div>
+            <button
+              onClick={() => setIsChallenging(false)}
+              className="w-full py-3 bg-gray-800 hover:bg-gray-700 text-gray-500 rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+            >
+              Cancel Signal
+            </button>
           </div>
         </div>
       )}
