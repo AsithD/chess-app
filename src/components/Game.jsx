@@ -568,23 +568,23 @@ function Game({ room, socket, orientation, initialData, user }) {
                 </div>
             </div>
 
-            <div className="flex flex-col gap-4 w-full h-[600px]">
+            <div className="flex flex-col gap-4 w-full lg:h-[600px]">
                 {/* Move List Table (Chess.com Style) */}
-                <div className="flex-1 bg-gray-800 rounded-xl border border-gray-700 shadow-xl overflow-hidden flex flex-col">
-                    <div className="p-3 border-b border-gray-700 flex justify-between items-center bg-gray-900/50">
+                <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-xl overflow-hidden flex flex-col max-h-[300px] lg:max-h-none lg:flex-1">
+                    <div className="p-3 border-b border-gray-700 flex justify-between items-center bg-gray-900/50 shrink-0">
                         <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Tactical Log</span>
                         <div className="flex items-center gap-2">
                             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
                             <span className="text-[8px] font-bold text-gray-500 uppercase tracking-tighter">Live Analysis</span>
                         </div>
                     </div>
-                    <div ref={moveListRef} className="flex-1 overflow-y-auto custom-scrollbar p-2">
+                    <div className="overflow-y-auto custom-scrollbar flex-1">
                         <table className="w-full text-xs font-mono">
-                            <thead className="text-[9px] text-gray-600 uppercase tracking-widest text-left">
+                            <thead className="text-[9px] text-gray-600 uppercase tracking-widest sticky top-0 bg-gray-800 z-10">
                                 <tr>
-                                    <th className="pb-2 pl-2">#</th>
-                                    <th className="pb-2 text-center">White</th>
-                                    <th className="pb-2 text-center">Black</th>
+                                    <th className="py-2 pl-2 text-left w-10">#</th>
+                                    <th className="py-2 text-center">White</th>
+                                    <th className="py-2 text-center">Black</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -596,7 +596,7 @@ function Game({ room, socket, orientation, initialData, user }) {
                                             onClick={() => setViewingIndex(i * 2 + 1)}
                                         >
                                             <div className="flex flex-col items-center gap-0.5">
-                                                <span className="text-right w-full pr-4">{i * 2 + 1 < moveHistory.length ? getMoveSAN(moveHistory[i * 2], moveHistory[i * 2 + 1]) : ''}</span>
+                                                <span>{i * 2 + 1 < moveHistory.length ? getMoveSAN(moveHistory[i * 2], moveHistory[i * 2 + 1]) : ''}</span>
                                                 {(godMode || initialData?.isReview) && getEvalLabel(i * 2 + 1) && (
                                                     <span className={`text-[7px] px-1 rounded uppercase font-black ${getEvalLabel(i * 2 + 1) === 'Best' ? 'bg-green-500/20 text-green-400' :
                                                         getEvalLabel(i * 2 + 1) === 'Good' ? 'bg-blue-500/20 text-blue-400' :
@@ -612,7 +612,7 @@ function Game({ room, socket, orientation, initialData, user }) {
                                             onClick={() => setViewingIndex(i * 2 + 2)}
                                         >
                                             <div className="flex flex-col items-center gap-0.5">
-                                                <span className="text-left w-full pl-4">{i * 2 + 2 < moveHistory.length ? getMoveSAN(moveHistory[i * 2 + 1], moveHistory[i * 2 + 2]) : ''}</span>
+                                                <span>{i * 2 + 2 < moveHistory.length ? getMoveSAN(moveHistory[i * 2 + 1], moveHistory[i * 2 + 2]) : ''}</span>
                                                 {(godMode || initialData?.isReview) && getEvalLabel(i * 2 + 2) && (
                                                     <span className={`text-[7px] px-1 rounded uppercase font-black ${getEvalLabel(i * 2 + 2) === 'Best' ? 'bg-green-500/20 text-green-400' :
                                                         getEvalLabel(i * 2 + 2) === 'Good' ? 'bg-blue-500/20 text-blue-400' :
