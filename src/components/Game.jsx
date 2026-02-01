@@ -6,7 +6,7 @@ import { aiMove } from "js-chess-engine";
 import { db } from "../utils/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
-function Game({ room, socket, orientation, initialData }) {
+function Game({ room, socket, orientation, initialData, user }) {
     const [fen, setFen] = useState(() => initialData?.fen || new Chess().fen());
     const [waiting, setWaiting] = useState(() => initialData?.waiting ?? true);
     // Use a ref to keep track of fen without triggering re-renders in effects that only need *current* value
