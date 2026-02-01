@@ -86,8 +86,12 @@ function Game({ room, socket, orientation, initialData, user }) {
                 if (result) {
                     const newFen = game.fen();
                     console.log("Move applied, new FEN:", newFen, "Turn:", game.turn());
-                    const label = analyzeMove(fenRef.current, newFen, move);
-                    setEvaluations(prev => [...prev, label]);
+                    // Run analysis async to avoid UI lag
+                    const prevFenCopy = fenRef.current;
+                    setTimeout(() => {
+                        const label = analyzeMove(prevFenCopy, newFen, move);
+                        setEvaluations(prev => [...prev, label]);
+                    }, 0);
                     setMoveHistory(prev => [...prev, newFen]);
                     setFen(newFen);
                 } else {
@@ -198,8 +202,12 @@ function Game({ room, socket, orientation, initialData, user }) {
             if (result) {
                 const newFen = game.fen();
                 console.log("Move SUCCESS:", result.san, "New Turn:", game.turn());
-                const label = analyzeMove(fen, newFen, moveConfig);
-                setEvaluations(prev => [...prev, label]);
+                // Run analysis async to avoid UI lag
+                const prevFenCopy = fen;
+                setTimeout(() => {
+                    const label = analyzeMove(prevFenCopy, newFen, moveConfig);
+                    setEvaluations(prev => [...prev, label]);
+                }, 0);
                 setFen(newFen);
                 setMoveHistory(prev => [...prev.slice(0, viewingIndex === -1 ? prev.length : viewingIndex + 1), newFen]);
                 socket.emit("send_move", {
@@ -209,8 +217,7 @@ function Game({ room, socket, orientation, initialData, user }) {
                         promotion: result.promotion
                     },
                     fen: newFen,
-                    room,
-                    label
+                    room
                 });
                 return true;
             } else {
