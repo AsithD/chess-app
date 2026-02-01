@@ -38,9 +38,44 @@ const io = new Server(server, {
 });
 
 const rooms = new Map();
+const onlineUsers = new Map(); // uid -> { socketId, name, photoURL }
 
 io.on('connection', (socket) => {
     console.log(`User Connected: ${socket.id}`);
+
+    // Map uid to socket
+    socket.on("identify", (userData) => {
+        if (userData && userData.uid) {
+            onlineUsers.set(userData.uid, {
+                socketId: socket.id,
+                name: userData.name,
+                photoURL: userData.photoURL
+            });
+            // Public list of online users (excluding passwords/emails etc)
+            const list = Array.from(onlineUsers.entries()).map(([uid, data]) => ({
+                uid,
+                name: data.name,
+                photoURL: data.photoURL
+            }));
+            io.emit("online_users_update", list);
+        }
+    });
+
+    socket.on("disconnect", () => {
+        console.log(`User Disconnected: ${socket.id}`);
+        // Remove from onlineUsers
+        for (const [uid, data] of onlineUsers.entries()) {
+            if (data.socketId === socket.id) {
+                onlineUsers.delete(uid);
+                break;
+            }
+        }
+        io.emit("online_users_update", Array.from(onlineUsers.entries()).map(([uid, data]) => ({
+            uid,
+            name: data.name,
+            photoURL: data.photoURL
+        })));
+    });
 
     socket.on("create_room", ({ room, color }) => {
         const finalRoomName = room && room.trim() !== "" ? room : generateRoomName();
@@ -183,9 +218,50 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on("disconnect", () => {
-        console.log("User Disconnected", socket.id);
-        // Cleanup empty rooms logic could go here, but omitted for simplicity
+    socket.on("send_challenge", ({ targetUid, fromUser }) => {
+        const target = onlineUsers.get(targetUid);
+        if (target) {
+            io.to(target.socketId).emit("challenge_received", {
+                fromUid: fromUser.uid,
+                fromName: fromUser.name,
+                fromPhoto: fromUser.photoURL
+            });
+        }
+    });
+
+    socket.on("accept_challenge", ({ fromUid }) => {
+        const challenger = onlineUsers.get(fromUid);
+        if (challenger && challenger.socketId) {
+            const roomName = `challenge-${Math.random().toString(36).substr(2, 7)}`;
+
+            // Initialize Room Data
+            rooms.set(roomName, {
+                players: [challenger.socketId, socket.id],
+                colors: {
+                    [challenger.socketId]: "white",
+                    [socket.id]: "black"
+                },
+                fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            });
+
+            // Make both sockets join the room at the socket level
+            const challengerSocket = io.sockets.sockets.get(challenger.socketId);
+            if (challengerSocket) challengerSocket.join(roomName);
+            socket.join(roomName);
+
+            // Notify both to start the game
+            io.to(challenger.socketId).emit("challenge_accepted", { room: roomName, color: "white" });
+            socket.emit("challenge_accepted", { room: roomName, color: "black" });
+
+            console.log(`Challenge Match Started: ${roomName} between ${challenger.socketId} and ${socket.id}`);
+        }
+    });
+
+    socket.on("reject_challenge", ({ fromUid }) => {
+        const challenger = onlineUsers.get(fromUid);
+        if (challenger) {
+            io.to(challenger.socketId).emit("challenge_rejected");
+        }
     });
 });
 

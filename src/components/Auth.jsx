@@ -27,7 +27,8 @@ function Auth({ onAuthSuccess }) {
                 isGuest: false
             });
         } catch (error) {
-            alert("Login failed. Check if Google Auth is enabled in Firebase!");
+            console.error("Full Login Error:", error);
+            alert(`Login failed: ${error.message}`);
         } finally {
             setLoading(false);
         }

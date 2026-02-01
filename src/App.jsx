@@ -10,6 +10,15 @@ function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [history, setHistory] = useState([]);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [incomingChallenge, setIncomingChallenge] = useState(null);
+  const [isChallenging, setIsChallenging] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      socket.emit("identify", user);
+    }
+  }, [user]);
 
   useEffect(() => {
     let unsubscribeHistory;
@@ -37,11 +46,56 @@ function App() {
       }
       setAuthLoading(false);
     });
+
+    socket.on("online_users_update", (users) => {
+      setOnlineUsers(users);
+    });
+
+    socket.on("challenge_received", (challenger) => {
+      setIncomingChallenge(challenger);
+    });
+
+    socket.on("challenge_accepted", ({ room, color }) => {
+      setRoom(room);
+      setPlayerColor(color);
+      setInitialData({ waiting: false });
+      setIsInGame(true);
+      setIncomingChallenge(null);
+      setIsChallenging(false);
+      setShowProfile(false);
+    });
+
+    socket.on("challenge_rejected", () => {
+      alert("Challenge rejected.");
+      setIsChallenging(false);
+    });
+
     return () => {
       unsubscribeAuth();
       if (unsubscribeHistory) unsubscribeHistory();
+      socket.off("online_users_update");
+      socket.off("challenge_received");
+      socket.off("challenge_accepted");
+      socket.off("challenge_rejected");
     };
   }, []);
+
+  const sendChallenge = (targetUid) => {
+    if (!user) return;
+    setIsChallenging(true);
+    socket.emit("send_challenge", { targetUid, fromUser: user });
+  };
+
+  const acceptChallenge = () => {
+    if (!incomingChallenge) return;
+    socket.emit("accept_challenge", { fromUid: incomingChallenge.fromUid });
+  };
+
+  const rejectChallenge = () => {
+    if (!incomingChallenge) return;
+    socket.emit("reject_challenge", { fromUid: incomingChallenge.fromUid });
+    setIncomingChallenge(null);
+  };
 
   const handleLogout = () => {
     firebaseLogout();
@@ -306,20 +360,79 @@ function App() {
                 )}
               </div>
 
-              {/* Friends (Mockup) */}
+              {/* Friends / Online Users */}
               {!user.isGuest && (
                 <div className="space-y-4">
-                  <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Active Allies</h5>
-                  <p className="text-xs text-gray-600 italic px-2">No allies connected. Connect to challenge others.</p>
+                  <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Active Agents</h5>
+                  {onlineUsers.filter(u => u.uid !== user.uid).length > 0 ? (
+                    <div className="space-y-2">
+                      {onlineUsers.filter(u => u.uid !== user.uid).map((u) => (
+                        <div key={u.uid} className="flex items-center justify-between p-3 rounded-xl bg-gray-900/40 border border-gray-800">
+                          <div className="flex items-center gap-3">
+                            <div className="relative">
+                              <div className="w-8 h-8 rounded-lg bg-gray-700 overflow-hidden border border-gray-600">
+                                {u.photoURL ? <img src={u.photoURL} alt="" /> : <span className="flex items-center justify-center h-full text-xs font-bold text-gray-500">{u.name[0]}</span>}
+                              </div>
+                              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-gray-800 animate-pulse"></div>
+                            </div>
+                            <span className="text-sm font-bold text-gray-300">{u.name}</span>
+                          </div>
+                          <button
+                            onClick={() => sendChallenge(u.uid)}
+                            disabled={isChallenging}
+                            className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50 transition-all active:scale-90"
+                          >
+                            {isChallenging ? "..." : "CHALLENGE"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-600 italic px-2">No other agents detected in the grid.</p>
+                  )}
                 </div>
               )}
 
               <button
-                onClick={() => { setUser(null); setShowProfile(false); setIsInGame(false); }}
+                onClick={handleLogout}
                 className="w-full py-4 border-2 border-red-900/30 text-red-500 hover:bg-red-900/20 rounded-xl font-bold transition-all mt-auto flex items-center justify-center gap-2"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                 Terminate Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Incoming Challenge Popup */}
+      {incomingChallenge && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in zoom-in duration-300">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-md" />
+          <div className="relative bg-gray-900 border-2 border-blue-500 p-8 rounded-3xl shadow-2xl max-w-sm w-full text-center space-y-6">
+            <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center shadow-lg border-2 border-blue-400">
+              {incomingChallenge.fromPhoto ? (
+                <img src={incomingChallenge.fromPhoto} className="rounded-2xl" />
+              ) : (
+                <span className="text-3xl font-black text-white">{incomingChallenge.fromName[0]}</span>
+              )}
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-black text-white uppercase tracking-tighter">Match Requested</h3>
+              <p className="text-gray-400 text-sm">**{incomingChallenge.fromName}** is challenging you to a duel!</p>
+            </div>
+            <div className="flex gap-4">
+              <button
+                onClick={rejectChallenge}
+                className="flex-1 py-4 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-2xl font-black uppercase tracking-widest transition-all"
+              >
+                Decline
+              </button>
+              <button
+                onClick={acceptChallenge}
+                className="flex-1 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-blue-900/40 transition-all animate-pulse"
+              >
+                Engage
               </button>
             </div>
           </div>
