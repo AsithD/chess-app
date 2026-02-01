@@ -432,8 +432,8 @@ function Game({ room, socket, orientation, initialData, user }) {
                         areArrowsAllowed={true}
                     />
 
-                    {/* Move Navigation Overlay (Small floating controls) */}
-                    {moveHistory.length > 1 && (
+                    {/* Move Navigation Overlay (Only in Review Mode) */}
+                    {initialData?.isReview && moveHistory.length > 1 && (
                         <div className="absolute -bottom-14 left-0 right-0 flex justify-center items-center gap-1 bg-gray-900 border border-gray-700 p-1 rounded-xl shadow-xl z-30">
                             <button
                                 onClick={() => setViewingIndex(0)}
