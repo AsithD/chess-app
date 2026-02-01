@@ -9,9 +9,10 @@ import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 function Game({ room, socket, orientation, initialData, user }) {
     const [fen, setFen] = useState(() => initialData?.fen || new Chess().fen());
     const [waiting, setWaiting] = useState(() => initialData?.waiting ?? true);
-    const [moveHistory, setMoveHistory] = useState(() => [initialData?.fen || new Chess().fen()]);
-    const [viewingIndex, setViewingIndex] = useState(-1); // -1 means live game
-    const [evaluations, setEvaluations] = useState([]); // Store labels like 'Blunder', 'Best'
+    const [moveHistory, setMoveHistory] = useState(() => initialData?.moveHistory || [initialData?.fen || new Chess().fen()]);
+    const [viewingIndex, setViewingIndex] = useState(initialData?.isReview ? 0 : -1);
+    const [evaluations, setEvaluations] = useState(() => initialData?.evaluations || []);
+    const moveListRef = useRef(null);
 
     // Analyze move using js-chess-engine
     const analyzeMove = useCallback((prevFen, currentFen, move) => {
@@ -53,6 +54,23 @@ function Game({ room, socket, orientation, initialData, user }) {
         return evaluations[index - 1] || "Book";
     };
 
+    // Helper to get SAN move notation by diffing FENs
+    const getMoveSAN = (prevFen, currFen) => {
+        try {
+            const game1 = new Chess(prevFen);
+            const game2 = new Chess(currFen);
+            const moves = game1.moves({ verbose: true });
+            for (const move of moves) {
+                game1.move(move);
+                if (game1.fen() === currFen) return move.san;
+                game1.undo();
+            }
+        } catch (e) {
+            return "??";
+        }
+        return "--";
+    };
+
     const fenRef = useRef(fen);
 
     useEffect(() => {
@@ -81,38 +99,70 @@ function Game({ room, socket, orientation, initialData, user }) {
         };
 
         const onUserJoined = (id) => {
-            console.log("User joined:", id);
+            console.log("Opponent joined:", id);
             setWaiting(false);
-            // Send the current FEN from the ref (most up to date) to ensure sync
-            socket.emit("sync_board", { room, fen: fenRef.current });
+            // Host sends full state to joiner
+            if (orientation === 'white' || initialData?.waiting) {
+                socket.emit("sync_board", {
+                    room,
+                    fen: fenRef.current,
+                    moveHistory: moveHistory,
+                    evaluations: evaluations
+                });
+            }
         };
 
-        const onSetBoard = (newFen) => {
-            console.log("Syncing board to:", newFen);
-            setFen(newFen);
-            setWaiting(false);
-        };
-
-        const onGameStart = ({ fen: startFen, players }) => {
-            if (startFen) setFen(startFen);
-            if (players && players.length >= 2) setWaiting(false);
+        const onSetBoard = (data) => {
+            // Handle both string FEN (legacy) and object payload
+            if (typeof data === 'string') {
+                console.log("Board synced (FEN only):", data);
+                setFen(data);
+                setWaiting(false);
+                setMoveHistory([data]);
+            } else {
+                console.log("Board synced (full state):", data);
+                setFen(data.fen);
+                setWaiting(false);
+                if (data.moveHistory) setMoveHistory(data.moveHistory);
+                if (data.evaluations) setEvaluations(data.evaluations);
+            }
         };
 
         socket.on("receive_move", onReceiveMove);
         socket.on("user_joined", onUserJoined);
         socket.on("set_board", onSetBoard);
-        socket.on("game_start", onGameStart);
 
         return () => {
             socket.off("receive_move", onReceiveMove);
             socket.off("user_joined", onUserJoined);
             socket.off("set_board", onSetBoard);
-            socket.off("game_start", onGameStart);
         };
     }, [socket, room]);
 
+    // Bulk analysis for review mode
+    useEffect(() => {
+        if (initialData?.isReview && moveHistory.length > 1 && evaluations.length === 0) {
+            const evals = [];
+            for (let i = 1; i < moveHistory.length; i++) {
+                const prev = moveHistory[i - 1];
+                const curr = moveHistory[i];
+                // In review mode, we don't have the move object easily unless we diff FENs
+                // For now, let's just label them as "Analyzed" or a simplified label
+                evals.push("Book"); // Placeholder for full diff analysis if needed
+            }
+            setEvaluations(evals);
+        }
+    }, [initialData, moveHistory]);
+
+    // Auto-scroll move list
+    useEffect(() => {
+        if (moveListRef.current) {
+            moveListRef.current.scrollTop = moveListRef.current.scrollHeight;
+        }
+    }, [moveHistory]);
+
     function onDrop(sourceSquare, targetSquare, piece) {
-        if (waiting) return false; // Don't allow moves if waiting for opponent
+        if (waiting || initialData?.isReview) return false; // Disable moves in review mode
 
         try {
             const game = new Chess(fen);
@@ -148,8 +198,9 @@ function Game({ room, socket, orientation, initialData, user }) {
                         to: result.to,
                         promotion: result.promotion
                     },
-                    fen: newFen, // Sync FEN with server
-                    room
+                    fen: newFen,
+                    room,
+                    label
                 });
                 return true;
             }
@@ -398,12 +449,12 @@ function Game({ room, socket, orientation, initialData, user }) {
                             >
                                 ◀
                             </button>
-                            {/* Move Quality Label - Floating above navigation */}
-                            {(viewingIndex !== 0) && (
+                            {/* Move Quality Label - Floating above navigation (Only in God Mode or Review) */}
+                            {(viewingIndex !== 0) && (godMode || initialData?.isReview) && (
                                 <div className={`absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all duration-300 animate-bounce ${getEvalLabel(viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex) === 'Best' ? 'bg-green-500/20 text-green-400 border-green-500/30 shadow-[0_0_15px_rgba(34,197,94,0.3)]' :
-                                        getEvalLabel(viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex) === 'Good' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
-                                            getEvalLabel(viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex) === 'Blunder' ? 'bg-red-500/20 text-red-400 border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.3)]' :
-                                                'bg-gray-800 text-gray-500 border-gray-700'
+                                    getEvalLabel(viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex) === 'Good' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                                        getEvalLabel(viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex) === 'Blunder' ? 'bg-red-500/20 text-red-400 border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.3)]' :
+                                            'bg-gray-800 text-gray-500 border-gray-700'
                                     }`}>
                                     {getEvalLabel(viewingIndex === -1 ? moveHistory.length - 1 : viewingIndex)}
                                 </div>
@@ -517,13 +568,78 @@ function Game({ room, socket, orientation, initialData, user }) {
                 </div>
             </div>
 
-            {/* Chat Sidebar */}
-            <Chat
-                socket={socket}
-                room={room}
-                orientation={orientation}
-                onGodModeActivate={() => setGodMode(true)}
-            />
+            <div className="flex flex-col gap-4 w-full h-[600px]">
+                {/* Move List Table (Chess.com Style) */}
+                <div className="flex-1 bg-gray-800 rounded-xl border border-gray-700 shadow-xl overflow-hidden flex flex-col">
+                    <div className="p-3 border-b border-gray-700 flex justify-between items-center bg-gray-900/50">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Tactical Log</span>
+                        <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                            <span className="text-[8px] font-bold text-gray-500 uppercase tracking-tighter">Live Analysis</span>
+                        </div>
+                    </div>
+                    <div ref={moveListRef} className="flex-1 overflow-y-auto custom-scrollbar p-2">
+                        <table className="w-full text-xs font-mono">
+                            <thead className="text-[9px] text-gray-600 uppercase tracking-widest text-left">
+                                <tr>
+                                    <th className="pb-2 pl-2">#</th>
+                                    <th className="pb-2 text-center">White</th>
+                                    <th className="pb-2 text-center">Black</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {Array.from({ length: Math.ceil((moveHistory.length - 1) / 2) }).map((_, i) => (
+                                    <tr key={i} className={`border-b border-gray-700/30 ${viewingIndex === i * 2 + 1 || viewingIndex === i * 2 + 2 ? 'bg-blue-500/10' : ''}`}>
+                                        <td className="py-2 pl-2 text-gray-600">{i + 1}.</td>
+                                        <td
+                                            className={`py-2 text-center cursor-pointer hover:bg-gray-700/50 rounded transition-colors ${viewingIndex === i * 2 + 1 ? 'text-blue-400 font-bold' : 'text-gray-300'}`}
+                                            onClick={() => setViewingIndex(i * 2 + 1)}
+                                        >
+                                            <div className="flex flex-col items-center gap-0.5">
+                                                <span className="text-right w-full pr-4">{i * 2 + 1 < moveHistory.length ? getMoveSAN(moveHistory[i * 2], moveHistory[i * 2 + 1]) : ''}</span>
+                                                {(godMode || initialData?.isReview) && getEvalLabel(i * 2 + 1) && (
+                                                    <span className={`text-[7px] px-1 rounded uppercase font-black ${getEvalLabel(i * 2 + 1) === 'Best' ? 'bg-green-500/20 text-green-400' :
+                                                        getEvalLabel(i * 2 + 1) === 'Good' ? 'bg-blue-500/20 text-blue-400' :
+                                                            getEvalLabel(i * 2 + 1) === 'Blunder' ? 'bg-red-500/20 text-red-500' : 'bg-gray-700 text-gray-500'
+                                                        }`}>
+                                                        {getEvalLabel(i * 2 + 1)}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td
+                                            className={`py-2 text-center cursor-pointer hover:bg-gray-700/50 rounded transition-colors ${viewingIndex === i * 2 + 2 ? 'text-blue-400 font-bold' : 'text-gray-300'}`}
+                                            onClick={() => setViewingIndex(i * 2 + 2)}
+                                        >
+                                            <div className="flex flex-col items-center gap-0.5">
+                                                <span className="text-left w-full pl-4">{i * 2 + 2 < moveHistory.length ? getMoveSAN(moveHistory[i * 2 + 1], moveHistory[i * 2 + 2]) : ''}</span>
+                                                {(godMode || initialData?.isReview) && getEvalLabel(i * 2 + 2) && (
+                                                    <span className={`text-[7px] px-1 rounded uppercase font-black ${getEvalLabel(i * 2 + 2) === 'Best' ? 'bg-green-500/20 text-green-400' :
+                                                        getEvalLabel(i * 2 + 2) === 'Good' ? 'bg-blue-500/20 text-blue-400' :
+                                                            getEvalLabel(i * 2 + 2) === 'Blunder' ? 'bg-red-500/20 text-red-500' : 'bg-gray-700 text-gray-500'
+                                                        }`}>
+                                                        {getEvalLabel(i * 2 + 2)}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                {/* Chat Sidebar */}
+                <div className="flex-1 min-h-[300px]">
+                    <Chat
+                        socket={socket}
+                        room={room}
+                        orientation={orientation}
+                        onGodModeActivate={() => setGodMode(true)}
+                    />
+                </div>
+            </div>
         </div >
     );
 }

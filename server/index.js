@@ -143,7 +143,9 @@ io.on('connection', (socket) => {
         rooms.set(finalName, {
             players: [socket.id],
             colors: { [socket.id]: assignedColor },
-            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            moveHistory: ["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"],
+            evaluations: []
         });
         socket.join(finalName);
         socket.emit("room_created", { room: finalName, color: assignedColor });
@@ -163,15 +165,37 @@ io.on('connection', (socket) => {
         roomData.players.push(socket.id);
         roomData.colors[socket.id] = assignedColor;
         socket.join(room);
-        socket.emit("room_joined", { room, color: assignedColor, fen: roomData.fen });
-        io.in(room).emit("opponent_joined", { color: assignedColor, socketId: socket.id });
+
+        // Use user_joined for Consistency with Game.jsx
+        socket.emit("room_joined", {
+            room,
+            color: assignedColor,
+            fen: roomData.fen,
+            moveHistory: roomData.moveHistory,
+            evaluations: roomData.evaluations
+        });
+        socket.to(room).emit("user_joined", socket.id);
+
+        console.log(`User ${socket.id} joined room ${room} as ${assignedColor}`);
     });
 
-    socket.on("send_move", ({ room, move, fen }) => {
+    socket.on("send_move", ({ room, move, fen, label }) => {
         const roomData = rooms.get(room);
         if (roomData) {
             roomData.fen = fen;
+            roomData.moveHistory.push(fen);
+            if (label) roomData.evaluations.push(label);
             socket.to(room).emit("receive_move", move);
+        }
+    });
+
+    socket.on("sync_board", ({ room, fen, moveHistory, evaluations }) => {
+        const roomData = rooms.get(room);
+        if (roomData) {
+            roomData.fen = fen;
+            if (moveHistory) roomData.moveHistory = moveHistory;
+            if (evaluations) roomData.evaluations = evaluations;
+            socket.to(room).emit("set_board", { fen, moveHistory, evaluations });
         }
     });
 
@@ -225,6 +249,8 @@ io.on('connection', (socket) => {
                 players: [challenger.socketId, socket.id],
                 colors: { [challenger.socketId]: "white", [socket.id]: "black" },
                 fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                moveHistory: ["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"],
+                evaluations: [],
                 isRated: isRated,
                 uids: {
                     [challenger.socketId]: fromUid,

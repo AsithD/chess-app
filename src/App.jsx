@@ -148,6 +148,19 @@ function App() {
 
   const [initialData, setInitialData] = useState({});
 
+  const handleReviewMatch = (match) => {
+    setIsInGame(true);
+    setRoom(match.room || "Review");
+    setPlayerColor(match.color || "white");
+    setInitialData({
+      isReview: true,
+      fen: match.fen, // Final position or start? Usually final for review, but we'll load history
+      moveHistory: match.moveHistory || [match.fen],
+      waiting: false
+    });
+    setGameKey(prev => prev + 1);
+  };
+
   useEffect(() => {
     socket.on("room_created", ({ room, color }) => {
       setIsInGame(true);
@@ -157,11 +170,11 @@ function App() {
       setError("");
     });
 
-    socket.on("room_joined", ({ room, color, fen }) => {
+    socket.on("room_joined", ({ room, color, fen, moveHistory, evaluations }) => {
       setIsInGame(true);
       setRoom(room);
       setPlayerColor(color);
-      setInitialData({ waiting: false, fen });
+      setInitialData({ waiting: false, fen, moveHistory, evaluations });
       setError("");
     });
 
@@ -353,7 +366,11 @@ function App() {
                       {history.length > 0 ? (
                         <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                           {history.map((match) => (
-                            <div key={match.id} className="p-3 rounded-xl bg-gray-900/40 border border-gray-700 flex justify-between items-center group hover:border-blue-500 transition-colors">
+                            <div
+                              key={match.id}
+                              onClick={() => handleReviewMatch(match)}
+                              className="p-3 rounded-xl bg-gray-900/40 border border-gray-700 flex justify-between items-center group hover:border-blue-500 hover:bg-gray-800/50 cursor-pointer transition-all active:scale-[0.98]"
+                            >
                               <div className="flex flex-col">
                                 <span className={`text-xs font-black uppercase tracking-tight ${match.result.includes("Won") ? "text-green-400" : match.result.includes("Lost") ? "text-red-400" : "text-gray-400"}`}>
                                   {match.result}
